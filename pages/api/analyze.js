@@ -1,5 +1,3 @@
-import formidable from "formidable";
-import fs from "fs";
 import OpenAI from "openai";
 import sharp from "sharp";
 import { hashBuffer } from "../../lib/hashImage";
@@ -7,10 +5,12 @@ import { addEntry, findSimilar } from "../../lib/vectorStore";
 import { saveAnalysis } from "../../lib/database";
 
 export const config = {
-  api: { bodyParser: false }
+  api: {
+    bodyParser: { sizeLimit: "10mb" }
+  }
 };
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const MODEL = process.env.OPENAI_MODEL || "gpt-4o";
 const EMB_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 const MAX_SIMILAR = Number(process.env.MAX_SIMILAR || 3);
 const USE_MOCK_DATA =
@@ -21,16 +21,6 @@ const USE_MOCK_DATA =
 function getClient() {
   if (!process.env.OPENAI_API_KEY) return null;
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-}
-
-function parseForm(req) {
-  return new Promise((resolve, reject) => {
-    const form = new formidable.IncomingForm({ keepExtensions: true });
-    form.parse(req, (err, fields, files) => {
-      if (err) reject(err);
-      else resolve({ fields, files });
-    });
-  });
 }
 
 function generateMockAnalysis() {
@@ -60,14 +50,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    /* ---------- parse upload ---------- */
-    const { files } = await parseForm(req);
-    const file = files.image;
-    if (!file) return res.status(400).json({ error: "No image uploaded" });
+    const { imageBase64, filename } = req.body;
 
-    const buffer = fs.readFileSync(file.filepath);
-    if (!buffer?.length)
-      return res.status(400).json({ error: "Invalid image file" });
+    if (!imageBase64) {
+      return res.status(400).json({ error: "No image provided" });
+    }
+
+    /* ---------- base64 → buffer ---------- */
+    const base64Data = imageBase64.split(",")[1];
+    const buffer = Buffer.from(base64Data, "base64");
 
     /* ---------- image processing ---------- */
     const resized = await sharp(buffer)
@@ -85,10 +76,10 @@ export default async function handler(req, res) {
     if (useMock) {
       outputText = generateMockAnalysis().detailedExplanation;
     } else {
-      const client = getClient();
       try {
+        const client = getClient();
         const vision = await client.chat.completions.create({
-          model: "gpt-4o",
+          model: MODEL,
           messages: [
             {
               role: "user",
@@ -131,7 +122,7 @@ export default async function handler(req, res) {
         summary: outputText.slice(0, 200),
         embedding,
         ts: Date.now(),
-        meta: { filename: file.originalFilename }
+        meta: { filename }
       });
     } catch {}
 
@@ -142,10 +133,10 @@ export default async function handler(req, res) {
         : [];
     } catch {}
 
-    /* ---------- FINAL RESULT (FIXED OBJECT) ---------- */
+    /* ---------- FINAL RESULT ---------- */
     const finalResult = {
       id,
-      filename: file.originalFilename || "upload",
+      filename: filename || "upload",
       analysis: outputText,
       related,
       imageDataUrl: dataUrl,
@@ -153,7 +144,6 @@ export default async function handler(req, res) {
       timestamp: new Date().toISOString()
     };
 
-    /* ---------- save ---------- */
     try {
       saveAnalysis({ ...finalResult, embedding });
     } catch {}
