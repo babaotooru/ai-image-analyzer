@@ -624,14 +624,17 @@ CRITICAL RULES:
       isMockData: useMock, // Flag to indicate if this is mock data
       // Image properties
       imageProperties: {
-        ...imageMetadata,
-        aspectRatio: originalDimensions.width > 0 && originalDimensions.height > 0 
-          ? (originalDimensions.width / originalDimensions.height).toFixed(2) 
-          : '0:0',
-        megapixels: originalDimensions.width > 0 && originalDimensions.height > 0
-          ? ((originalDimensions.width * originalDimensions.height) / 1000000).toFixed(2)
-          : '0'
-      }
+  ...imageMetadata,
+  aspectRatio:
+    originalDimensions.width > 0 && originalDimensions.height > 0
+      ? (originalDimensions.width / originalDimensions.height).toFixed(2)
+      : '0:0',
+  megapixels:
+    originalDimensions.width > 0 && originalDimensions.height > 0
+      ? ((originalDimensions.width * originalDimensions.height) / 1000000).toFixed(2)
+      : '0'
+},
+
       imageDataUrl: dataUrl, // Include the processed image data URL
       isMockData: useMock // Flag to indicate if this is mock data
     };
