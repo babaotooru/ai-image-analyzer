@@ -611,33 +611,33 @@ CRITICAL RULES:
     }
 
     // Prepare comprehensive final result
-    const finalResult = {
-      id,
-      caption,
-      rawVision: outputText,
-      ...parsed,
-      related,
-      filename: file.originalFilename || 'upload',
-      fileSize: buffer.length,
-      timestamp: new Date().toISOString(),
-      imageDataUrl: dataUrl, // Include the processed image data URL
-      isMockData: useMock, // Flag to indicate if this is mock data
-      // Image properties
-      imageProperties: {
-  ...imageMetadata,
-  aspectRatio:
-    originalDimensions.width > 0 && originalDimensions.height > 0
-      ? (originalDimensions.width / originalDimensions.height).toFixed(2)
-      : '0:0',
-  megapixels:
-    originalDimensions.width > 0 && originalDimensions.height > 0
-      ? ((originalDimensions.width * originalDimensions.height) / 1000000).toFixed(2)
-      : '0'
-},
+ const finalResult = {
+  id,
+  caption,
+  rawVision: outputText,
+  ...parsed,
+  related,
+  filename: file.originalFilename || 'upload',
+  fileSize: buffer.length,
+  timestamp: new Date().toISOString(),
+  imageDataUrl: dataUrl,
+  isMockData: useMock,
 
-      imageDataUrl: dataUrl, // Include the processed image data URL
-      isMockData: useMock // Flag to indicate if this is mock data
-    };
+  imageProperties: {
+    ...imageMetadata,
+    aspectRatio:
+      originalDimensions.width > 0 && originalDimensions.height > 0
+        ? (originalDimensions.width / originalDimensions.height).toFixed(2)
+        : '0:0',
+    megapixels:
+      originalDimensions.width > 0 && originalDimensions.height > 0
+        ? ((originalDimensions.width * originalDimensions.height) / 1000000).toFixed(2)
+        : '0'
+  }
+};
+
+  // Flag to indicate if this is mock data
+  
 
     // Save to database
     try {
