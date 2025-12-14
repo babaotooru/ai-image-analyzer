@@ -6,9 +6,7 @@ import { hashBuffer } from "../../lib/hashImage";
 import { addEntry, findSimilar } from "../../lib/vectorStore";
 import { saveAnalysis } from "../../lib/database";
 
-export const config = {
-  api: { bodyParser: false }
-};
+export const config = { api: { bodyParser: false } };
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const EMB_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
@@ -16,7 +14,7 @@ const MAX_SIMILAR = parseInt(process.env.MAX_SIMILAR || "3", 10);
 const USE_MOCK_DATA =
   process.env.USE_MOCK_DATA === "true" || !process.env.OPENAI_API_KEY;
 
-/* ----------------------- Helpers ----------------------- */
+/* -------------------- Helpers -------------------- */
 
 function getClient() {
   if (!process.env.OPENAI_API_KEY) return null;
@@ -35,24 +33,22 @@ function parseForm(req) {
 
 function generateMockAnalysis() {
   return {
-    imageSummary:
-      "This is a mock image analysis generated because no API key is configured.",
-    detectedElements: ["Sample object", "Background element"],
-    detailedExplanation:
-      "Mock mode is active. Configure OPENAI_API_KEY for real analysis.",
-    realWorldApplications: "Demonstration and testing",
-    educationalInsight: "Shows the structure of AI analysis output",
+    imageSummary: "Mock image analysis (no API key configured).",
+    detectedElements: ["Sample object"],
+    detailedExplanation: "Mock mode active.",
+    realWorldApplications: "Demo usage",
+    educationalInsight: "Structure demonstration",
     confidenceLevel: "Medium",
     domain: "General",
     extractedText: "",
-    colors: "Various",
+    colors: "Unknown",
     environment: "Unknown",
     people: "No people detected",
     technicalDetails: "Mock data"
   };
 }
 
-/* ----------------------- API ----------------------- */
+/* -------------------- API -------------------- */
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -60,7 +56,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    /* ---------- Parse upload ---------- */
     const { files } = await parseForm(req);
     const file = files?.image;
 
@@ -79,19 +74,17 @@ export default async function handler(req, res) {
     const id = await hashBuffer(resized);
     const dataUrl = `data:image/jpeg;base64,${resized.toString("base64")}`;
 
-    /* ---------- Vision Analysis ---------- */
-    let visionText = "";
+    /* ---------- Vision ---------- */
+    let outputText = "";
     let useMock = USE_MOCK_DATA;
 
     if (useMock) {
-      const mock = generateMockAnalysis();
-      visionText = mock.detailedExplanation;
+      outputText = generateMockAnalysis().detailedExplanation;
     } else {
       const client = getClient();
       if (!client) {
         useMock = true;
-        const mock = generateMockAnalysis();
-        visionText = mock.detailedExplanation;
+        outputText = generateMockAnalysis().detailedExplanation;
       } else {
         const response = await client.chat.completions.create({
           model: "gpt-4o",
@@ -104,31 +97,38 @@ export default async function handler(req, res) {
               ]
             }
           ],
-          max_tokens: 2000
+          max_tokens: 2000,
+          temperature: 0.1
         });
 
-        visionText = response.choices[0].message.content;
+        outputText = response.choices[0].message.content || "";
       }
     }
 
+    const caption =
+      outputText.split("\n")[0]?.slice(0, 150) || "Image analysis";
+
     /* ---------- Embedding ---------- */
     let embedding = [];
-    const client = getClient();
+    const summary = `${caption} -- ${outputText.slice(0, 500)}`;
 
-    if (!useMock && client) {
-      const emb = await client.embeddings.create({
-        model: EMB_MODEL,
-        input: visionText.slice(0, 1000)
-      });
-      embedding = emb.data[0].embedding;
+    if (!useMock) {
+      const client = getClient();
+      if (client) {
+        const emb = await client.embeddings.create({
+          model: EMB_MODEL,
+          input: summary
+        });
+        embedding = emb.data[0].embedding;
+      }
     } else {
       embedding = new Array(1536).fill(0);
     }
 
-    /* ---------- Vector Store ---------- */
+    /* ---------- Vector store ---------- */
     addEntry({
       id,
-      summary: visionText.slice(0, 500),
+      summary,
       embedding,
       ts: Date.now(),
       meta: { filename: file.originalFilename || "upload" }
@@ -136,27 +136,21 @@ export default async function handler(req, res) {
 
     const related = !useMock ? findSimilar(embedding, MAX_SIMILAR) : [];
 
-    /* ---------- Final Result ---------- */
+    /* ---------- Final result ---------- */
     const finalResult = {
       id,
-      caption: visionText.slice(0, 120),
-      rawVision: visionText,
-      imageSummary: visionText.slice(0, 300),
-      detectedElements: [],
-      detailedExplanation: visionText,
-      realWorldApplications: "See detailed explanation",
-      educationalInsight: "Extract knowledge from visual context",
+      caption,
+      rawVision: outputText,
+      imageSummary: caption,
+      detailedExplanation: outputText,
       confidenceLevel: useMock ? "Medium" : "High",
       domain: "General",
-      extractedText: "",
-      colors: "Not specified",
-      environment: "Not specified",
-      people: "Not detected",
-      technicalDetails: "Image resized and analyzed",
       related,
       filename: file.originalFilename || "upload",
       fileSize: buffer.length,
       timestamp: new Date().toISOString(),
+
+      // preview + flags
       imageDataUrl: dataUrl,
       isMockData: useMock
     };
@@ -166,7 +160,7 @@ export default async function handler(req, res) {
       const saved = saveAnalysis({ ...finalResult, embedding });
       finalResult.dbId = saved?.id;
     } catch (e) {
-      console.error("DB save failed:", e);
+      console.error("DB save error:", e);
     }
 
     return res.status(200).json(finalResult);
