@@ -16,15 +16,11 @@ const MAX_SIMILAR = parseInt(process.env.MAX_SIMILAR || "3", 10);
 const USE_MOCK_DATA =
   process.env.USE_MOCK_DATA === "true" || !process.env.OPENAI_API_KEY;
 
-/* -------------------- UTILITIES -------------------- */
+/* ----------------------- Helpers ----------------------- */
 
 function getClient() {
   if (!process.env.OPENAI_API_KEY) return null;
-  try {
-    return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  } catch {
-    return null;
-  }
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
 function parseForm(req) {
@@ -39,23 +35,24 @@ function parseForm(req) {
 
 function generateMockAnalysis() {
   return {
-    imageSummary: "Mock image analysis (API key not configured).",
-    detectedElements: ["Sample object"],
+    imageSummary:
+      "This is a mock image analysis generated because no API key is configured.",
+    detectedElements: ["Sample object", "Background element"],
     detailedExplanation:
-      "This is mock data. Configure OPENAI_API_KEY to enable real analysis.",
-    realWorldApplications: "Demonstration purpose",
-    educationalInsight: "Shows system output structure",
+      "Mock mode is active. Configure OPENAI_API_KEY for real analysis.",
+    realWorldApplications: "Demonstration and testing",
+    educationalInsight: "Shows the structure of AI analysis output",
     confidenceLevel: "Medium",
     domain: "General",
     extractedText: "",
-    colors: "Unknown",
+    colors: "Various",
     environment: "Unknown",
     people: "No people detected",
-    technicalDetails: "Mock mode"
+    technicalDetails: "Mock data"
   };
 }
 
-/* -------------------- API HANDLER -------------------- */
+/* ----------------------- API ----------------------- */
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -63,20 +60,17 @@ export default async function handler(req, res) {
   }
 
   try {
+    /* ---------- Parse upload ---------- */
     const { files } = await parseForm(req);
-    const file = files.image;
+    const file = files?.image;
 
     if (!file) {
       return res.status(400).json({ error: "No image uploaded" });
     }
 
     const buffer = fs.readFileSync(file.filepath || file.path);
-    if (!buffer?.length) {
-      return res.status(400).json({ error: "Invalid image file" });
-    }
 
-    /* ---------- IMAGE PROCESSING ---------- */
-
+    /* ---------- Image processing ---------- */
     const resized = await sharp(buffer)
       .resize({ width: 1024, height: 1024, fit: "inside" })
       .jpeg({ quality: 90 })
@@ -85,19 +79,19 @@ export default async function handler(req, res) {
     const id = await hashBuffer(resized);
     const dataUrl = `data:image/jpeg;base64,${resized.toString("base64")}`;
 
-    /* ---------- VISION ANALYSIS ---------- */
-
-    let outputText = "";
+    /* ---------- Vision Analysis ---------- */
+    let visionText = "";
     let useMock = USE_MOCK_DATA;
 
     if (useMock) {
       const mock = generateMockAnalysis();
-      outputText = mock.detailedExplanation;
+      visionText = mock.detailedExplanation;
     } else {
       const client = getClient();
       if (!client) {
         useMock = true;
-        outputText = generateMockAnalysis().detailedExplanation;
+        const mock = generateMockAnalysis();
+        visionText = mock.detailedExplanation;
       } else {
         const response = await client.chat.completions.create({
           model: "gpt-4o",
@@ -106,73 +100,73 @@ export default async function handler(req, res) {
               role: "user",
               content: [
                 { type: "text", text: "Analyze this image in detail." },
-                {
-                  type: "image_url",
-                  image_url: { url: dataUrl, detail: "high" }
-                }
+                { type: "image_url", image_url: { url: dataUrl } }
               ]
             }
           ],
-          max_tokens: 2000,
-          temperature: 0.2
+          max_tokens: 2000
         });
 
-        outputText =
-          response.choices?.[0]?.message?.content ||
-          "No analysis returned.";
+        visionText = response.choices[0].message.content;
       }
     }
 
-    /* ---------- EMBEDDING ---------- */
-
+    /* ---------- Embedding ---------- */
     let embedding = [];
     const client = getClient();
 
-    if (client && !useMock) {
+    if (!useMock && client) {
       const emb = await client.embeddings.create({
         model: EMB_MODEL,
-        input: outputText.slice(0, 1000)
+        input: visionText.slice(0, 1000)
       });
       embedding = emb.data[0].embedding;
     } else {
       embedding = new Array(1536).fill(0);
     }
 
+    /* ---------- Vector Store ---------- */
     addEntry({
       id,
-      summary: outputText.slice(0, 200),
+      summary: visionText.slice(0, 500),
       embedding,
-      ts: Date.now()
+      ts: Date.now(),
+      meta: { filename: file.originalFilename || "upload" }
     });
 
-    const related = embedding.length
-      ? findSimilar(embedding, MAX_SIMILAR)
-      : [];
+    const related = !useMock ? findSimilar(embedding, MAX_SIMILAR) : [];
 
-    /* ---------- FINAL RESPONSE (FIXED) ---------- */
-
+    /* ---------- Final Result ---------- */
     const finalResult = {
       id,
-      caption: outputText.slice(0, 120),
-      rawVision: outputText,
+      caption: visionText.slice(0, 120),
+      rawVision: visionText,
+      imageSummary: visionText.slice(0, 300),
+      detectedElements: [],
+      detailedExplanation: visionText,
+      realWorldApplications: "See detailed explanation",
+      educationalInsight: "Extract knowledge from visual context",
+      confidenceLevel: useMock ? "Medium" : "High",
+      domain: "General",
+      extractedText: "",
+      colors: "Not specified",
+      environment: "Not specified",
+      people: "Not detected",
+      technicalDetails: "Image resized and analyzed",
       related,
       filename: file.originalFilename || "upload",
       fileSize: buffer.length,
       timestamp: new Date().toISOString(),
-
       imageDataUrl: dataUrl,
-      isMockData: useMock,
-
-      imageProperties: {
-        sizeMB: (buffer.length / (1024 * 1024)).toFixed(2)
-      }
+      isMockData: useMock
     };
 
+    /* ---------- Save ---------- */
     try {
       const saved = saveAnalysis({ ...finalResult, embedding });
       finalResult.dbId = saved?.id;
-    } catch {
-      // DB failure should not block response
+    } catch (e) {
+      console.error("DB save failed:", e);
     }
 
     return res.status(200).json(finalResult);
